@@ -1,0 +1,55 @@
+{
+  "name": "react-dom-transfer",
+  "version": "0.1.0",
+  "description": "Move DOM elements between containers without unmounting React components. Preserves video playback, iframe state, and all DOM state during transfer with optional FLIP animations.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "react",
+    "dom",
+    "transfer",
+    "move",
+    "reparent",
+    "fiber",
+    "stateNode",
+    "video",
+    "player",
+    "animation",
+    "flip",
+    "transition",
+    "preserve-state",
+    "no-unmount"
+  ],
+  "author": "exposir",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/exposir/react-dom-transfer"
+  },
+  "homepage": "https://github.com/exposir/react-dom-transfer#readme",
+  "bugs": {
+    "url": "https://github.com/exposir/react-dom-transfer/issues"
+  },
+  "peerDependencies": {
+    "react": ">=16.8.0",
+    "react-dom": ">=16.8.0"
+  },
+  "devDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@types/react": "^18.2.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
