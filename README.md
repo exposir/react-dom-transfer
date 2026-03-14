@@ -2,27 +2,44 @@
 
 [中文文档](./README.zh-CN.md)
 
-Move DOM elements between containers without unmounting React components.
+**Move a DOM element from one React container to another — without React knowing.**
 
-Preserves video playback, iframe state, CSS animations, and all DOM state during transfer — with optional FLIP transition animations.
+No unmount. No remount. No state loss. The video keeps playing.
 
-## The Problem
+```
+  ┌──────────────┐                         ┌──────────────────────┐
+  │  Feed Card    │      transfer()         │   Detail Page        │
+  │ ┌──────────┐ │  ──────────────────────► │ ┌──────────────────┐ │
+  │ │ ▶ video  │ │  CSS transition + FLIP   │ │   ▶ video        │ │
+  │ └──────────┘ │                          │ │   (same element) │ │
+  └──────────────┘                          │ └──────────────────┘ │
+                         restore()          └──────────────────────┘
+                   ◄──────────────────────
+```
 
-In React, when you need to move a heavy stateful element (like a video player) from Container A to Container B:
+## Why?
 
-- **React's default**: unmount → remount → state lost, video restarts
-- **react-reparenting**: modifies entire Fiber tree → Context changes, Effects re-run
-- **react-reverse-portal**: Portal-based → no transition animation support
+React destroys DOM when components unmount. For most elements, that's fine. For `<video>`, `<iframe>`, `<canvas>`, and anything with live state — it's a disaster:
 
-## The Solution
+- Video restarts from zero
+- iframe reloads entirely
+- WebGL context is lost
+- WebSocket connections drop
 
-`react-dom-transfer` takes a minimal approach: **swap only the Fiber `stateNode` pointer, don't touch the Fiber tree structure**.
+Existing solutions either [modify the entire Fiber tree](https://github.com/paol-imi/react-reparenting) (breaking Context and re-running Effects) or [require Portal wrappers](https://github.com/httptoolkit/react-reverse-portal) (no animation support, unmaintained since 2021).
 
-- ✅ No unmount/remount — DOM node stays alive
-- ✅ No Context changes — Fiber tree structure unchanged
-- ✅ No Effects re-run — React doesn't know anything happened
-- ✅ Built-in FLIP animations — smooth transitions between containers
-- ✅ ~200 lines — minimal, auditable code
+**This library takes a different approach**: swap only the Fiber `stateNode` pointer. React's component tree stays untouched — no Context changes, no Effects re-run, no reconciliation triggered.
+
+## How it's different
+
+| | this library | react-reparenting | react-reverse-portal |
+|:--|:--:|:--:|:--:|
+| Modifies Fiber tree | ❌ | ✅ | ❌ |
+| Context preserved | ✅ | ❌ | ✅ |
+| Effects re-run | ❌ | ✅ | ❌ |
+| FLIP animation | ✅ | ❌ | ❌ |
+| Maintained | ✅ | ❌ 2021 | ❌ 2021 |
+| Code size | ~200 LOC | ~400 LOC | ~300 LOC |
 
 ## Install
 
@@ -30,135 +47,93 @@ In React, when you need to move a heavy stateful element (like a video player) f
 npm install react-dom-transfer
 ```
 
-## Usage
-
-### Hook API
+## Quick Start
 
 ```tsx
 import { useDomTransfer } from 'react-dom-transfer';
 
 function App() {
   const { sourceRef, targetRef, transfer, restore, isTransferred } =
-    useDomTransfer({
-      transition: 'all 0.3s ease',
-    });
+    useDomTransfer({ transition: 'all 0.3s ease' });
 
   return (
     <>
-      {/* Source: e.g. a feed card */}
       <div ref={sourceRef}>
-        <video src="live-stream.flv" autoPlay />
+        <video src="stream.flv" autoPlay />
       </div>
 
-      {/* Target: e.g. a detail page */}
       <div ref={targetRef} />
 
       <button onClick={isTransferred ? restore : transfer}>
-        {isTransferred ? 'Back' : 'Enter'}
+        {isTransferred ? 'Back' : 'Go'}
       </button>
     </>
   );
 }
 ```
 
-### Imperative API
+That's it. The `<video>` flies from source to target with a 0.3s animation. Playback never stops.
+
+## Imperative API
+
+For use outside React components or in class-based code:
 
 ```typescript
 import { transferDom, restoreDom } from 'react-dom-transfer';
 
-// Move element from current parent to target container
-const state = transferDom(element, targetContainer, {
+const state = transferDom(element, target, {
   transition: 'all 0.3s ease',
-  onEnd: () => console.log('Transfer complete'),
+  onEnd: () => console.log('done'),
 });
 
-// Later: move it back
-restoreDom(state, {
-  transition: 'all 0.3s ease',
-  onEnd: () => console.log('Restored'),
-});
+// later
+restoreDom(state);
 ```
 
-## How It Works
+## How it works
 
-### 1. FLIP Animation
+Two things happen when you call `transfer()`:
 
-Uses the [FLIP technique](https://aerotwist.com/blog/flip-your-animations/) (First, Last, Invert, Play):
+**1. FLIP animation** — Record position → detach → `position: fixed` at origin → CSS transition to destination → settle into target container.
 
-1. Record element's current position (`getBoundingClientRect`)
-2. Detach from source, apply `position: fixed` at original coordinates
-3. CSS transition to target position
-4. On `transitionend`, nest into target container
-
-### 2. Fiber stateNode Swap
-
-React internally attaches `__reactFiber$xxx` properties to DOM nodes. When we move a DOM node, we update the Fiber's `stateNode` (and its `alternate`) to point to the new location:
+**2. Fiber stateNode swap** — Copy `__reactFiber$` and `__reactProps$` from the old DOM reference to the new one. Update `fiber.stateNode` (and `fiber.alternate.stateNode`) to point at the moved element. React never notices.
 
 ```
-React Fiber Tree:  unchanged (child/sibling/return pointers stay the same)
-Fiber.stateNode:   updated to point to new DOM position
-Result:            React thinks nothing happened, DOM is in new location
+What React sees:    Component → Fiber → stateNode → [same pointer]
+What actually is:   The DOM node is now in a completely different container
 ```
 
-This is fundamentally different from `react-reparenting`, which modifies the entire Fiber tree structure (changing `child`, `sibling`, `return`, and `index` pointers), causing Context to change and Effects to re-run.
-
-## API Reference
+## API
 
 ### `useDomTransfer(options?)`
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `transition` | `string` | — | CSS transition string (e.g. `'all 0.3s ease'`) |
-| `zIndex` | `number` | `9999` | z-index during animation |
-| `timeout` | `number` | `3000` | Fallback timeout (ms) if `transitionend` doesn't fire |
-| `onTransferEnd` | `() => void` | — | Called after transfer completes |
-| `onRestoreEnd` | `() => void` | — | Called after restore completes |
+```typescript
+const { sourceRef, targetRef, transfer, restore, isTransferred } =
+  useDomTransfer({
+    transition: 'all 0.3s ease', // CSS transition (optional)
+    zIndex: 9999,                // z-index during animation
+    timeout: 3000,               // fallback if transitionend doesn't fire
+    onTransferEnd: () => {},     // called after transfer
+    onRestoreEnd: () => {},      // called after restore
+  });
+```
 
-Returns:
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `sourceRef` | `RefObject` | Attach to source container |
-| `targetRef` | `RefObject` | Attach to target container |
-| `transfer` | `() => void` | Move DOM from source to target |
-| `restore` | `() => void` | Move DOM back to source |
-| `isTransferred` | `boolean` | Current state |
-
-### `transferDom(element, target, options?)`
-
-Imperatively transfer a DOM element to a target container. Returns a state object for `restoreDom`.
+### `transferDom(element, target, options?) → state`
 
 ### `restoreDom(state, options?)`
 
-Restore a previously transferred element back to its original container.
+## Use cases
 
-## Use Cases
-
-- **Video players** — move between feed cards and detail pages without interrupting playback
-- **Live streaming** — seamless room transitions
-- **Map widgets** — move between sidebar preview and full-screen view
-- **Media editors** — move preview panels between layouts
-
-## Comparison
-
-| | react-dom-transfer | react-reparenting | react-reverse-portal |
-|---|---|---|---|
-| Approach | Swap stateNode only | Rebuild Fiber tree | Portal target switch |
-| Fiber tree modified | ❌ No | ✅ Yes | ❌ No |
-| Context preserved | ✅ Yes | ❌ Changes | ✅ Yes |
-| Effects re-run | ❌ No | ✅ Yes | ❌ No |
-| Transition animation | ✅ Built-in | ❌ No | ❌ No |
-| Maintained | ✅ Active | ❌ 2021 | ❌ 2021 |
+- Video players moving between feed cards and detail pages
+- Live streaming room transitions
+- Map previews expanding to fullscreen
+- Media editor panels changing layout
 
 ## Caveats
 
-- Relies on React's internal `__reactFiber$` properties. These are not part of React's public API and may change between major versions. The library includes detection and warnings.
-- Designed for React 16.8+ (Hooks). Tested on React 18.
-- The source container gets a placeholder `<div>` during transfer to prevent layout collapse.
-
-## Inspired By
-
-This approach is extracted from real-world production code at scale, handling seamless video player transitions in feed-based applications serving millions of users.
+- Relies on React's internal `__reactFiber$` property. Not a public API — may change between major React versions. Runtime detection and warnings are included.
+- React 16.8+ required (Hooks). Tested on React 18.
+- A placeholder `<div>` is inserted in the source container during transfer to prevent layout collapse.
 
 ## License
 
