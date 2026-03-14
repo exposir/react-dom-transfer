@@ -2,44 +2,48 @@
 
 [中文文档](./README.zh-CN.md)
 
-**Move a DOM element from one React container to another — without React knowing.**
+**React can't move DOM without destroying it. This library can.**
 
-No unmount. No remount. No state loss. The video keeps playing.
+When React moves an element to a new container, it unmounts and remounts — destroying all DOM state in the process. iframe reloads. Video restarts. Canvas clears. Scroll position resets. Focus is lost.
+
+`react-dom-transfer` moves the actual DOM node between containers while React isn't looking.
 
 ```
-  ┌──────────────┐                         ┌──────────────────────┐
-  │  Feed Card    │      transfer()         │   Detail Page        │
-  │ ┌──────────┐ │  ──────────────────────► │ ┌──────────────────┐ │
-  │ │ ▶ video  │ │  CSS transition + FLIP   │ │   ▶ video        │ │
-  │ └──────────┘ │                          │ │   (same element) │ │
-  └──────────────┘                          │ └──────────────────┘ │
-                         restore()          └──────────────────────┘
-                   ◄──────────────────────
+  ┌─────────────┐                          ┌─────────────────────┐
+  │ Container A  │       transfer()         │  Container B        │
+  │ ┌─────────┐ │  ───────────────────────► │ ┌─────────────────┐ │
+  │ │ element │ │   smooth CSS transition   │ │    element      │ │
+  │ └─────────┘ │                           │ │  (same instance)│ │
+  └─────────────┘                           │ └─────────────────┘ │
+                        restore()           └─────────────────────┘
+                  ◄───────────────────────
 ```
 
-## Why?
+No unmount. No remount. No state loss. Optional FLIP animation.
 
-React destroys DOM when components unmount. For most elements, that's fine. For `<video>`, `<iframe>`, `<canvas>`, and anything with live state — it's a disaster:
+## What survives the transfer
 
-- Video restarts from zero
-- iframe reloads entirely
-- WebGL context is lost
-- WebSocket connections drop
-
-Existing solutions either [modify the entire Fiber tree](https://github.com/paol-imi/react-reparenting) (breaking Context and re-running Effects) or [require Portal wrappers](https://github.com/httptoolkit/react-reverse-portal) (no animation support, unmaintained since 2021).
-
-**This library takes a different approach**: swap only the Fiber `stateNode` pointer. React's component tree stays untouched — no Context changes, no Effects re-run, no reconciliation triggered.
+| DOM state | `appendChild` | this library |
+|:--|:--:|:--:|
+| `<video>` playback position | ❌ restarts | ✅ keeps playing |
+| `<iframe>` loaded page | ❌ reloads | ✅ stays loaded |
+| `<canvas>` / WebGL context | ❌ cleared | ✅ preserved |
+| Scroll position | ❌ reset | ✅ preserved |
+| Input focus & selection | ❌ lost | ✅ preserved |
+| CSS animations / transitions | ❌ reset | ✅ continues |
+| Event listeners | ❌ may break | ✅ intact |
+| React component state | ✅ (if same key) | ✅ always |
 
 ## How it's different
 
 | | this library | react-reparenting | react-reverse-portal |
 |:--|:--:|:--:|:--:|
 | Modifies Fiber tree | ❌ | ✅ | ❌ |
-| Context preserved | ✅ | ❌ | ✅ |
-| Effects re-run | ❌ | ✅ | ❌ |
-| FLIP animation | ✅ | ❌ | ❌ |
-| Maintained | ✅ | ❌ 2021 | ❌ 2021 |
-| Code size | ~200 LOC | ~400 LOC | ~300 LOC |
+| Context preserved | ✅ | ❌ breaks | ✅ |
+| Effects re-run | ❌ | ✅ all re-run | ❌ |
+| FLIP animation | ✅ built-in | ❌ | ❌ |
+| Still maintained | ✅ | ❌ since 2021 | ❌ since 2021 |
+| Approach | swap `stateNode` only | rebuild Fiber tree | Portal target switch |
 
 ## Install
 
@@ -59,24 +63,22 @@ function App() {
   return (
     <>
       <div ref={sourceRef}>
-        <video src="stream.flv" autoPlay />
+        <iframe src="https://example.com" />
       </div>
 
       <div ref={targetRef} />
 
       <button onClick={isTransferred ? restore : transfer}>
-        {isTransferred ? 'Back' : 'Go'}
+        {isTransferred ? 'Collapse' : 'Expand'}
       </button>
     </>
   );
 }
 ```
 
-That's it. The `<video>` flies from source to target with a 0.3s animation. Playback never stops.
+The `<iframe>` flies to the target container with a 0.3s animation. The page inside it never reloads.
 
 ## Imperative API
-
-For use outside React components or in class-based code:
 
 ```typescript
 import { transferDom, restoreDom } from 'react-dom-transfer';
@@ -92,16 +94,16 @@ restoreDom(state);
 
 ## How it works
 
-Two things happen when you call `transfer()`:
-
 **1. FLIP animation** — Record position → detach → `position: fixed` at origin → CSS transition to destination → settle into target container.
 
-**2. Fiber stateNode swap** — Copy `__reactFiber$` and `__reactProps$` from the old DOM reference to the new one. Update `fiber.stateNode` (and `fiber.alternate.stateNode`) to point at the moved element. React never notices.
+**2. Fiber stateNode swap** — Copy `__reactFiber$` and `__reactProps$` to the moved element. Update `fiber.stateNode` and `fiber.alternate.stateNode`. React's Fiber tree structure (`child` / `sibling` / `return`) stays completely untouched.
 
 ```
-What React sees:    Component → Fiber → stateNode → [same pointer]
-What actually is:   The DOM node is now in a completely different container
+React sees:       Component → Fiber → stateNode → [same pointer]
+Reality:          The DOM node is now in a different container entirely
 ```
+
+This is a fundamentally different approach from `react-reparenting`, which modifies the Fiber tree structure itself — changing `child`, `sibling`, `return` pointers, which causes Context to change and all Effects to re-run.
 
 ## API
 
@@ -110,11 +112,11 @@ What actually is:   The DOM node is now in a completely different container
 ```typescript
 const { sourceRef, targetRef, transfer, restore, isTransferred } =
   useDomTransfer({
-    transition: 'all 0.3s ease', // CSS transition (optional)
-    zIndex: 9999,                // z-index during animation
-    timeout: 3000,               // fallback if transitionend doesn't fire
-    onTransferEnd: () => {},     // called after transfer
-    onRestoreEnd: () => {},      // called after restore
+    transition: 'all 0.3s ease', // CSS transition (optional, instant if omitted)
+    zIndex: 9999,                // z-index during animation (default: 9999)
+    timeout: 3000,               // fallback timeout in ms (default: 3000)
+    onTransferEnd: () => {},     // fires after transfer settles
+    onRestoreEnd: () => {},      // fires after restore settles
   });
 ```
 
@@ -122,18 +124,20 @@ const { sourceRef, targetRef, transfer, restore, isTransferred } =
 
 ### `restoreDom(state, options?)`
 
-## Use cases
+## Real-world use cases
 
-- Video players moving between feed cards and detail pages
-- Live streaming room transitions
-- Map previews expanding to fullscreen
-- Media editor panels changing layout
+- **Video / live streaming** — player moves between feed and detail view without rebuffering
+- **Embedded content** — iframe survives layout changes without reloading
+- **Maps** — Google Maps / Mapbox moves from sidebar to fullscreen without re-rendering tiles
+- **Rich text editors** — Monaco / CodeMirror moves between panels keeping undo history
+- **3D / WebGL** — Three.js canvas keeps scene state across layout transitions
+- **Dashboard widgets** — drag to reorder without losing chart scroll position
 
 ## Caveats
 
-- Relies on React's internal `__reactFiber$` property. Not a public API — may change between major React versions. Runtime detection and warnings are included.
-- React 16.8+ required (Hooks). Tested on React 18.
-- A placeholder `<div>` is inserted in the source container during transfer to prevent layout collapse.
+- Relies on React's internal `__reactFiber$` property (not public API). Runtime detection and warnings included.
+- React 16.8+ (Hooks). Tested on React 18.
+- A placeholder `<div>` occupies the source container during transfer.
 
 ## License
 
