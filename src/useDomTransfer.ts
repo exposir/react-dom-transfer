@@ -2,6 +2,13 @@ import { useCallback, useRef, useState } from 'react';
 import { transferDom, restoreDom } from './core';
 import type { TransferOptions, TransferResult } from './types';
 
+declare const process: { env: { NODE_ENV?: string } } | undefined;
+
+const isDev =
+  typeof process !== 'undefined' &&
+  typeof process.env !== 'undefined' &&
+  process.env.NODE_ENV !== 'production';
+
 /**
  * React Hook for transferring a DOM element between two containers
  * without unmounting or re-rendering.
@@ -50,7 +57,7 @@ export function useDomTransfer(options: TransferOptions = {}): TransferResult {
     const target = targetRef.current;
 
     if (!source || !target) {
-      if (process.env.NODE_ENV !== 'production') {
+      if (isDev) {
         console.warn(
           '[useDomTransfer] sourceRef or targetRef is not attached to a DOM element.'
         );
@@ -61,7 +68,7 @@ export function useDomTransfer(options: TransferOptions = {}): TransferResult {
     // Find the actual element to transfer (first child of source container)
     const element = source.firstElementChild as HTMLElement;
     if (!element) {
-      if (process.env.NODE_ENV !== 'production') {
+      if (isDev) {
         console.warn('[useDomTransfer] Source container is empty.');
       }
       return;
@@ -80,7 +87,7 @@ export function useDomTransfer(options: TransferOptions = {}): TransferResult {
 
   const restore = useCallback(() => {
     if (!stateRef.current) {
-      if (process.env.NODE_ENV !== 'production') {
+      if (isDev) {
         console.warn('[useDomTransfer] Nothing to restore.');
       }
       return;
